@@ -1,0 +1,6 @@
+__pycache__
+*.py
+
+/neofp.egg-info
+/build
+/dist
