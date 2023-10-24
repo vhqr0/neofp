@@ -1,6 +1,6 @@
 (setv
   version "0.1.0"
-  requires ["hy~=0.27.0" "hyrule~=0.4.0" "hiolib~=0.1.0" "hpacket~=0.1.0"])
+  requires ["hy~=0.27.0" "hyrule~=0.4.0" "hiolib~=0.1.0" "hpacket~=0.1.0" "scapy~=2.5.0" "pypcap~=1.3.0"])
 
 (require
   hyrule :readers * *)

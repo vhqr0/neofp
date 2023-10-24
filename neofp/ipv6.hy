@@ -2,30 +2,11 @@
   hiolib.rule :readers * *)
 
 (import
-  scapy.all :as sp
   hpacket.inet *
   neofp.base *)
 
-(defclass IPv6FPCtx [FPCtx]
+(defclass IPv6FPCtx [BaseIPv6FPCtx]
   (setv fp-classes (list))
-
-  (defn [property] default-iface [self]
-    (get (.route sp.conf.route6 self.dst) 0))
-
-  (defn [property] default-route [self]
-    (let [route (.route sp.conf.route6 self.dst :dev self.iface)]
-      (unless (= (get route 0) self.iface)
-        (raise RuntimeError))
-      route))
-
-  (defn [property] default-mac-dst [self]
-    (sp.getmacbyip6 (if (= self.next-hop "::") self.dst self.next-hop)))
-
-  (defn [property] default-mac-src [self]
-    (. (get sp.conf.ifaces self.iface) mac))
-
-  (defn [property] pcap-filter [self]
-    (.format "ip6 src {}" self.dst))
 
   (defn get-answer-idseq [self parsed-answer]
     (let [head (get parsed-answer ICMPv6)]

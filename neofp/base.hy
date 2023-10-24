@@ -2,20 +2,53 @@
   hiolib.rule :readers * *)
 
 (import
+  sys
   json
   time [sleep time]
   math [modf]
   random [getrandbits]
-  functools [cached-property]
+  functools [cached-property partial]
   collections [deque]
   logging
   logging [getLogger]
-  select [select]
   threading [Thread]
+  scapy.all :as sp
   pcap :as pypcap
   hiolib.rule *
   hpacket.pcap *
   hpacket.inet *)
+
+(defn sp-get-iface [iface]
+  (when (and (= sys.platform "win32") (!= iface "\\Device\\NPF_Loopback"))
+    (setv iface (.removeprefix iface "\\Device\\NPF_")))
+  (get sp.conf.ifaces iface))
+
+;; NOTICE: CHANGE GLOBAL STATE!!!
+(defn sp-set-iface [iface]
+  (setv sp.conf.iface (sp-get-iface iface)))
+
+(defn guess-iface-by-ip [sp-route ip]
+  (get (.route sp-route ip) 0))
+
+(setv guess-iface-by-ipv4 (partial guess-iface-by-ip sp.conf.route)
+      guess-iface-by-ipv6 (partial guess-iface-by-ip sp.conf.route6))
+
+(defn get-route-by-ip [sp-route ip]
+  (let [route (.route sp-route ip)]
+    (when (!= (sp-get-iface (get route 0)) sp.conf.iface)
+      (raise RuntimeError))
+    route))
+
+(setv get-route-by-ipv4 (partial get-route-by-ip sp.conf.route)
+      get-route-by-ipv6 (partial get-route-by-ip sp.conf.route6))
+
+(setv get-mac-by-ipv4 sp.getmacbyip
+      get-mac-by-ipv6 sp.getmacbyip6)
+
+(defn get-default-mac []
+  sp.conf.iface.mac)
+
+
 
 (defn idseq-packB [id seq]
   (+ (<< id 8) seq))
@@ -28,6 +61,8 @@
 
 (defn idseq-unpackH [x]
   #((>> x 16) (& x 0xffff)))
+
+
 
 (defclass FPCtx []
   (setv logger None
@@ -65,9 +100,13 @@
     ;; next-hop and iface. It is important to note that root
     ;; privileges are required to reslove the mac-dst.
 
-    (setv self.id            (+ 0x80 (getrandbits 7))
-          self.dst           dst
-          self.iface         (or iface self.default-iface)
+    (setv self.id    (+ 0x80 (getrandbits 7))
+          self.iface (or iface (self.get-default-iface dst)))
+
+    ;; NOTICE: CHANGE GLOBAL STATE!!!
+    (sp-set-iface self.iface)
+
+    (setv self.dst           dst
           self.src           (or src (get self.default-route 1))
           self.next-hop      (or next-hop (get self.default-route 2))
           self.mac-dst       (or mac-dst self.default-mac-dst)
@@ -78,21 +117,17 @@
           self.output-path   output-path
           self.fps           (lfor #(seq fp-class) (enumerate self.fp-classes) (fp-class :ctx self :seq seq))))
 
-  (defn [property] default-iface [self]
-    ;; get default iface by self.dst
+  (defn get-default-iface [self dst]
     (raise NotImplementedError))
 
   (defn [property] default-route [self]
-    ;; get default scapy-like route by self.dst and self.iface
     (raise NotImplementedError))
 
   (defn [property] default-mac-dst [self]
-    ;; get default mac dst by self.iface, self.dst and self.next-hop
     (raise NotImplementedError))
 
   (defn [property] default-mac-src [self]
-    ;; get default mac src by self.iface
-    (raise NotImplementedError))
+    (get-default-mac))
 
   (defn [property] pcap-filter [self]
     (raise NotImplementedError))
@@ -118,7 +153,8 @@
     (setv self.pcap
           (doto (pypcap.pcap :name self.iface :promisc False :timeout-ms 100)
                 (.setdirection pypcap.PCAP-D-IN)
-                (.setfilter self.pcap-filter))
+                (.setfilter self.pcap-filter)
+                (.setnonblock))
           self.packets       (list)
           self.send-finished False
           self.recv-queue    (deque)))
@@ -189,9 +225,8 @@
 
   (defn recver [self]
     (while (not self.send-finished)
-      (let [#(rlist _ _) (select [self.pcap.fd] (list) (list) 0.1)]
-        (when rlist
-          (.recv-answers self)))))
+      (.recv-answers self)
+      (sleep 0.001)))
 
   (defn run [self]
     (for [fp self.fps]
@@ -237,6 +272,36 @@
         (.log-info ctx)
         (unless args.list
           (.run ctx))))))
+
+
+
+(defclass BaseIPv4FPCtx [FPCtx]
+  (defn get-default-iface [self dst]
+    (guess-iface-by-ipv4 dst))
+
+  (defn [cached-property] default-route [self]
+    (get-route-by-ipv4 self.dst))
+
+  (defn [cached-property] default-mac-dst [self]
+    (get-mac-by-ipv4 (if (= self.next-hop "0.0.0.0") self.dst self.next-hop)))
+
+  (defn [property] pcap-filter [self]
+    (.format "ip src {}" self.dst)))
+
+(defclass BaseIPv6FPCtx [FPCtx]
+  (defn get-default-iface [self dst]
+    (guess-iface-by-ipv6 dst))
+
+  (defn [cached-property] default-route [self]
+    (get-route-by-ipv6 self.dst))
+
+  (defn [cached-property] default-mac-dst [self]
+    (get-mac-by-ipv6 (if (= self.next-hop "::") self.dst self.next-hop)))
+
+  (defn [property] pcap-filter [self]
+    (.format "ip6 src {}" self.dst)))
+
+
 
 (defclass FP []
   (defn #-- init [self ctx seq]
@@ -290,4 +355,5 @@
     (.build-pload self (.make-ping self code data) #** kwargs)))
 
 (export
-  :objects [idseq-packB idseq-unpackB idseq-packH idseq-unpackH FPCtx FP])
+  :objects [idseq-packB idseq-unpackB idseq-packH idseq-unpackH
+            FPCtx BaseIPv4FPCtx BaseIPv6FPCtx FP])
