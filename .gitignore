@@ -1,6 +1,7 @@
 __pycache__
 *.py
 
+/.venv
 /neofp.egg-info
 /build
 /dist
