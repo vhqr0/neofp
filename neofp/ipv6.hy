@@ -5,48 +5,11 @@
   hpacket.inet *
   neofp.base *)
 
-(defclass IPv6FPCtx [BaseIPv6FPCtx]
-  (setv fp-classes (list))
-
-  (defn get-answer-idseq [self parsed-answer]
-    (let [head (get parsed-answer ICMPv6)]
-      (when head
-        (setv head head.next-packet)
-        (cond (isinstance head ICMPv6EchoRep)
-              #(head.id head.seq)
-              (isinstance head #(ICMPv6DestUnreach ICMPv6ParamProblem))
-              (do
-                (setv head head.next-packet)
-                (when (isinstance head IPv6Error)
-                  (idseq-unpackB head.fl))))))))
+(defclass IPv6FPCtx [BaseICMPFPCtx]
+  (setv ipver IPVer.V6
+        fp-classes (list)))
 
 (defclass IPv6FP [FP]
-  (defn get-feat [self]
-    (when self.parsed-answers
-      (let [ipv6 (get self.parsed-answers 0 IPv6)
-            icmpv6 (get ipv6 ICMPv6)
-            np icmpv6.next-packet]
-        {"tc"   ipv6.tc
-         "fl"   ipv6.fl
-         "nh"   ipv6.nh
-         "plen" ipv6.plen
-         "type" icmpv6.type
-         "code" icmpv6.code
-         "arg"  (cond (isinstance np ICMPv6DestUnreach)
-                      np.unused
-                      (isinstance np ICMPv6ParamProblem)
-                      np.ptr
-                      True
-                      0)})))
-
-  (defn make-ip [self #** kwargs]
-    (IPv6 :fl self.idseqB :src self.ctx.src :dst self.ctx.dst #** kwargs))
-
-  (defn make-ping [self [code 0] [data (bytes 32)]]
-    (/ (ICMPv6 :type ICMPv6Type.EchoReq :code code)
-       (ICMPv6EchoReq :id self.ctx.id :seq self.seq)
-       data))
-
   (defn make-frag [self #** kwargs]
     (IPv6Frag :id self.idseqB #** kwargs))
 
@@ -85,30 +48,10 @@
           (.make-frag self :nh nh2 :offset offset-div)
           data2)])))
 
-
-;;; ctl
-;; control group.
-
 (defclass [IPv6FPCtx.register] Ctl [IPv6FP]
   (defn make-probe [self]
     (/ (.make-ip-with-ether self)
        (.make-ping self))))
-
-(defclass [IPv6FPCtx.register] CtlExtH [IPv6FP]
-  (defn make-probe [self]
-    (/ (.make-ip-with-ether self)
-       (IPv6HBHOpts)
-       (.make-ping self))))
-
-(defclass [IPv6FPCtx.register] CtlExtD [IPv6FP]
-  (defn make-probe [self]
-    (/ (.make-ip-with-ether self)
-       (IPv6DestOpts)
-       (.make-ping self))))
-
-(defclass [IPv6FPCtx.register] CtlExtF [IPv6FP]
-  (defn make-probes [self]
-    (.build-frag-2 self :flen 24)))
 
 
 ;;; ext family
@@ -127,48 +70,45 @@
 
 (defclass _ExtDupFP [_ExtFP]
   (setv n None)
+  (defn make-ext-1 [self]
+    (raise NotImplementedError))
   (defn make-ext [self]
     (if (= self.n 1)
         (IPv6DestOpts)
-        (/ #* (gfor _ (range self.n) (IPv6DestOpts))))))
+        (/ #* (gfor _ (range self.n) (.make-ext-1 self))))))
+
+(defclass _ExtDupHFP [_ExtDupFP] (defn make-ext-1 [self] (IPv6HBHOpts)))
+(defclass _ExtDupDFP [_ExtDupFP] (defn make-ext-1 [self] (IPv6DestOpts)))
+(defclass _ExtDupFFP [_ExtDupFP] (defn make-ext-1 [self] (IPv6Frag)))
 
 (defclass [IPv6FPCtx.register] ExtUnk [IPv6FP]
   (defn make-probe [self]
     (/ (.make-ip-with-ether self :nh 150)
        (bytes 32))))
 
-(defclass [IPv6FPCtx.register] ExtDup2D   [_ExtDupFP] (setv n   2))
-(defclass [IPv6FPCtx.register] ExtDup8D   [_ExtDupFP] (setv n   8))
-(defclass [IPv6FPCtx.register] ExtDup32D  [_ExtDupFP] (setv n  32))
-(defclass [IPv6FPCtx.register] ExtDup128D [_ExtDupFP] (setv n 128))
+(defclass [IPv6FPCtx.register] ExtCtlH [_ExtFP] (defn make-ext [self] (IPv6HBHOpts)))
+(defclass [IPv6FPCtx.register] ExtCtlD [_ExtFP] (defn make-ext [self] (IPv6DestOpts)))
+(defclass [IPv6FPCtx.register] ExtCtlF [_ExtFP] (defn make-ext [self] (IPv6Frag)))
 
-(defclass [IPv6FPCtx.register] ExtOrdDH [_ExtFP]
-  (defn make-ext [self]
-    (/ (IPv6DestOpts) (IPv6HBHOpts))))
+(defclass [IPv6FPCtx.register] ExtDup2H   [_ExtDupHFP] (setv n   2))
+(defclass [IPv6FPCtx.register] ExtDup8H   [_ExtDupHFP] (setv n   8))
+(defclass [IPv6FPCtx.register] ExtDup32H  [_ExtDupHFP] (setv n  32))
+(defclass [IPv6FPCtx.register] ExtDup128H [_ExtDupHFP] (setv n 128))
+(defclass [IPv6FPCtx.register] ExtDup2D   [_ExtDupDFP] (setv n   2))
+(defclass [IPv6FPCtx.register] ExtDup8D   [_ExtDupDFP] (setv n   8))
+(defclass [IPv6FPCtx.register] ExtDup32D  [_ExtDupDFP] (setv n  32))
+(defclass [IPv6FPCtx.register] ExtDup128D [_ExtDupDFP] (setv n 128))
+(defclass [IPv6FPCtx.register] ExtDup2F   [_ExtDupFFP] (setv n   2))
+(defclass [IPv6FPCtx.register] ExtDup8F   [_ExtDupFFP] (setv n   8))
+(defclass [IPv6FPCtx.register] ExtDup32F  [_ExtDupFFP] (setv n  32))
+(defclass [IPv6FPCtx.register] ExtDup128F [_ExtDupFFP] (setv n 128))
 
-(defclass [IPv6FPCtx.register] ExtOrdHDH [_ExtFP]
-  (defn make-ext [self]
-    (/ (IPv6HBHOpts) (IPv6DestOpts) (IPv6HBHOpts))))
-
-(defclass [IPv6FPCtx.register] ExtOrdF [_ExtFP]
-  (defn make-ext [self]
-    (.make-frag self)))
-
-(defclass [IPv6FPCtx.register] ExtOrdFF [_ExtFP]
-  (defn make-ext [self]
-    (/ (.make-frag self) (.make-frag self))))
-
-(defclass [IPv6FPCtx.register] ExtOrdDF [_ExtFP]
-  (defn make-ext [self]
-    (/ (IPv6DestOpts) (.make-frag self))))
-
-(defclass [IPv6FPCtx.register] ExtOrdFD [_ExtFP]
-  (defn make-ext [self]
-    (/ (.make-frag self) (IPv6DestOpts))))
-
-(defclass [IPv6FPCtx.register] ExtOrdFH [_ExtFP]
-  (defn make-ext [self]
-    (/ (.make-frag self) (IPv6HBHOpts))))
+(defclass [IPv6FPCtx.register] ExtOrdHD [_ExtFP] (defn make-ext [self] (/ (IPv6HBHOpts)  (IPv6DestOpts))))
+(defclass [IPv6FPCtx.register] ExtOrdDH [_ExtFP] (defn make-ext [self] (/ (IPv6DestOpts) (IPv6HBHOpts))))
+(defclass [IPv6FPCtx.register] ExtOrdHF [_ExtFP] (defn make-ext [self] (/ (IPv6HBHOpts)  (IPv6Frag))))
+(defclass [IPv6FPCtx.register] ExtOrdFH [_ExtFP] (defn make-ext [self] (/ (IPv6Frag)     (IPv6HBHOpts))))
+(defclass [IPv6FPCtx.register] ExtOrdDF [_ExtFP] (defn make-ext [self] (/ (IPv6DestOpts) (IPv6Frag))))
+(defclass [IPv6FPCtx.register] ExtOrdFD [_ExtFP] (defn make-ext [self] (/ (IPv6Frag)     (IPv6DestOpts))))
 
 
 ;;; opt family
@@ -275,70 +215,35 @@
 
 (defclass _FragExtFP [IPv6FP]
   (setv flen 24)
-
   (defn make-ext [self]
     (raise NotImplementedError))
-
   (defn make-probes [self]
     (.build-frag-2 self :data (/ (.make-ext self) (.make-ping self)) :flen self.flen)))
 
-(defclass [IPv6FPCtx.register] FragRes1 [_ExtFP]
-  (defn make-ext [self]
-    (.make-frag self :res1 1)))
+(defclass [IPv6FPCtx.register] FragRes1 [_ExtFP] (defn make-ext [self] (.make-frag self :res1 1)))
+(defclass [IPv6FPCtx.register] FragRes2 [_ExtFP] (defn make-ext [self] (.make-frag self :res2 1)))
 
-(defclass [IPv6FPCtx.register] FragRes2 [_ExtFP]
-  (defn make-ext [self]
-    (.make-frag self :res2 1)))
+(defclass [IPv6FPCtx.register] FragNh64 [IPv6FP] (defn make-probes [self] (.build-frag-2 self :nh #(IPProto.ICMPv6 IPProto.ICMPv4) :flen 24)))
+(defclass [IPv6FPCtx.register] FragNh46 [IPv6FP] (defn make-probes [self] (.build-frag-2 self :nh #(IPProto.ICMPv4 IPProto.ICMPv6) :flen 24)))
+(defclass [IPv6FPCtx.register] FragNh64R [ReverseMixin FragNh64])
+(defclass [IPv6FPCtx.register] FragNh46R [ReverseMixin FragNh46])
 
-(defclass [IPv6FPCtx.register] FragExtF [_FragExtFP]
-  (defn make-ext [self]
-    (.make-frag self)))
+(defclass [IPv6FPCtx.register] FragExtF [_FragExtFP] (defn make-ext [self] (IPv6Frag)))
+(defclass [IPv6FPCtx.register] FragExtD [_FragExtFP] (defn make-ext [self] (IPv6DestOpts)))
+(defclass [IPv6FPCtx.register] FragExtH [_FragExtFP] (defn make-ext [self] (IPv6HBHOpts)))
 
-(defclass [IPv6FPCtx.register] FragExtD [_FragExtFP]
-  (defn make-ext [self]
-    (IPv6DestOpts)))
-
-(defclass [IPv6FPCtx.register] FragExtH [_FragExtFP]
-  (defn make-ext [self]
-    (IPv6HBHOpts)))
-
-(defclass [IPv6FPCtx.register] FragHdrNh [IPv6FP]
-  (defn make-probes [self]
-    (.build-frag-2 self :nh #(IPProto.ICMPv6 IPProto.ICMPv4) :flen 24)))
-
-(defclass [IPv6FPCtx.register] FragHdrNhR [ReverseMixin FragHdrNh])
-
-(defclass [IPv6FPCtx.register] FragHdrExt [IPv6FP]
+(defclass [IPv6FPCtx.register] FragLenD [IPv6FP]
   (defn make-probes [self]
     (let [data1 (.build (IPv6DestOpts :nh IPProto.ICMPv6))
           data2 (.build-ping self)]
       (.build-frag-2 self :data #(data1 data2) :nh IPProto.ICMPv6))))
 
-(defclass [IPv6FPCtx.register] FragLen4 [IPv6FP]
-  (defn make-probes [self]
-    (.build-frag-2 self :flen #(4 0))))
+(defclass [IPv6FPCtx.register] FragLen4  [IPv6FP] (defn make-probes [self] (.build-frag-2 self :flen #(4 0))))
+(defclass [IPv6FPCtx.register] FragLen12 [IPv6FP] (defn make-probes [self] (.build-frag-2 self :flen #(12 8))))
 
-(defclass [IPv6FPCtx.register] FragLen12 [IPv6FP]
-  (defn make-probes [self]
-    (.build-frag-2 self :flen #(12 8))))
-
-(defclass [IPv6FPCtx.register] FragLen20 [IPv6FP]
-  (defn make-probes [self]
-    (.build-frag-2 self :flen #(20 16))))
-
-(defclass [IPv6FPCtx.register] FragLenTail0 [IPv6FP]
+(defclass [IPv6FPCtx.register] FragLen0T [IPv6FP]
   (defn make-probes [self]
     (.build-frag-2 self #((.build-ping self) b"") :nh IPProto.ICMPv6)))
-
-(defclass [IPv6FPCtx.register] FragLenTail8 [IPv6FP]
-  (defn make-probes [self]
-    (let [data (.build-ping self)]
-      (.build-frag-2 self :data data :nh IPProto.ICMPv6 :flen #((len data) (- (len data) 8))))))
-
-(defclass [IPv6FPCtx.register] FragLenTail4 [IPv6FP]
-  (defn make-probes [self]
-    (let [data (.build-ping self :data (bytes 36))]
-      (.build-frag-2 self :data data :nh IPProto.ICMPv6 :flen #((len data) (- (len data) 4))))))
 
 (defclass [IPv6FPCtx.register] FragOwt00 [IPv6FP]
   (defn make-probes [self]
@@ -347,20 +252,52 @@
 (defclass [IPv6FPCtx.register] FragOwt10 [IPv6FP]
   (defn make-probes [self]
     (let [data (.build-ping self)
-          data1 (+ (cut data 16) (* 8 b""))
+          data1 (+ (cut data 23) b"\x01")
           data2 (cut data 16 None)]
       (.build-frag-2 self :data #(data1 data2) :nh IPProto.ICMPv6 :flen #(24 16)))))
-
-(defclass [IPv6FPCtx.register] FragOwt10R [ReverseMixin FragOwt10])
 
 (defclass [IPv6FPCtx.register] FragOwt01 [IPv6FP]
   (defn make-probes [self]
     (let [data (.build-ping self)
           data1 (cut data 24)
-          data2 (+ (* 8 b"") (cut data 16 None))]
+          data2 (+ b"\x01" (cut data 17 None))]
       (.build-frag-2 self :data #(data1 data2) :nh IPProto.ICMPv6 :flen #(24 16)))))
 
+(defclass [IPv6FPCtx.register] FragOwt10R [ReverseMixin FragOwt10])
 (defclass [IPv6FPCtx.register] FragOwt01R [ReverseMixin FragOwt01])
+
+(defclass [IPv6FPCtx.register] FragOwtHHT00 [IPv6FP] (defn make-probes [self] (let [#(head tail) (.build-frag-2 self :flen 24)] [head head tail])))
+(defclass [IPv6FPCtx.register] FragOwtTTH00 [IPv6FP] (defn make-probes [self] (let [#(head tail) (.build-frag-2 self :flen 24)] [tail tail head])))
+
+(defclass [IPv6FPCtx.register] FragOwtHHT01 [IPv6FP]
+  (defn make-probes [self]
+    (let [data (.build-ping self)
+          data1 (+ (cut data 23) b"\x01")
+          data2 (cut data 24 None)
+          #(head1 _) (.build-frag-2 self :data #(data1 data2) :nh IPProto.ICMPv6)
+          #(head0 tail) (.build-frag-2 self :flen 24)]
+      #(head0 head1 tail))))
+
+(defclass [IPv6FPCtx.register] FragOwtTTH01 [IPv6FP]
+  (defn make-probes [self]
+    (let [data (.build-ping self)
+          data1 (cut data 24)
+          data2 (+ b"\x01" (cut data 25 None))
+          #(_ tail1) (.build-frag-2 self :data #(data1 data2) :nh IPProto.ICMPv6)
+          #(head tail0) (.build-frag-2 self :flen 24)]
+      #(tail0 tail1 head))))
+
+(defclass [IPv6FPCtx.register] FragOwtHHT10 [FragOwtHHT01] (defn make-probes [self] (let [#(head0 head1 tail) (#super make-probes)] #(head1 head0 tail))))
+(defclass [IPv6FPCtx.register] FragOwtTTH10 [FragOwtTTH01] (defn make-probes [self] (let [#(tail0 tail1 head) (#super make-probes)] #(tail1 tail0 head))))
+
+(defclass [IPv6FPCtx.register] FragOwtT8 [IPv6FP]
+  (defn make-probes [self]
+    (let [data (.build-ping self)
+          flen (len data)
+          offset (- flen 8)]
+      (.build-frag-2 self :data #(data (cut data offset None)) :nh IPProto.ICMPv6 :flen #(flen offset)))))
+
+(defclass [IPv6FPCtx.register] FragOwtT8R [ReverseMixin FragOwtT8])
 
 
 ;;; misc
@@ -373,7 +310,7 @@
 (defclass [IPv6FPCtx.register] UDPPort [IPv6FP]
   (defn make-probe [self]
     (/ (.make-ip-with-ether self)
-       (.make-udp self)
+       (.make-udp-with-rand-port self)
        (bytes 32))))
 
 (defmain []
