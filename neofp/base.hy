@@ -323,7 +323,7 @@
     ;; return a dict of #(name value) or None
     (raise NotImplementedError))
 
-  (defn get-fp-feat-names [self fp]
+  (defn [classmethod] get-fp-feat-names [cls fp-class]
     ;; return a list of names
     (raise NotImplementedError))
 
@@ -334,11 +334,11 @@
           (setv (get feat (.format "{}.{}" (. fp #-- class #-- name) k)) v)))
       feat))
 
-  (defn get-feat-names [self]
+  (defn [classmethod] get-feat-names [cls]
     (let [names (list)]
-      (for [fp self.fps]
-        (for [k (.get-fp-feat-names self fp)]
-          (.append names (.format "{}.{}" (. fp #-- class #-- name) k))))
+      (for [fp-class cls.fp-classes]
+        (for [k (.get-fp-feat-names cls fp-class)]
+          (.append names (.format "{}.{}" (. fp-class #-- name) k))))
       names))
 
   (defn get-info [self]
@@ -530,8 +530,8 @@
     (dfor k (.get-ip-feat-names self)
           k (getattr ip k)))
 
-  (defn get-ip-feat-names [self]
-    (ecase self.ipver
+  (defn [classmethod] get-ip-feat-names [cls]
+    (ecase cls.ipver
            IPVer.V4 ["ihl" "tos" "tlen" "id" "DF" "proto"]
            IPVer.V6 ["tc" "fl" "nh" "plen"]))
 
@@ -551,8 +551,8 @@
                       True
                       0)})))
 
-  (defn get-fp-feat-names [self fp]
-    [#* (.get-ip-feat-names self) "type" "code" "args"]))
+  (defn [classmethod] get-fp-feat-names [cls fp-class]
+    [#* (.get-ip-feat-names cls) "type" "code" "args"]))
 
 
 
@@ -579,7 +579,7 @@
                     (get feat (.format "optdata{}" i)) 0)))
         feat)))
 
-  (defn get-fp-feat-names [self fp]
+  (defn [classmethod] get-fp-feat-names [cls fp-class]
     (let [names ["seq" "ack" "dataofs" "res" "C" "E" "U" "A" "P" "R" "S" "F" "win" "uptr"]]
       (for [i (range 8)]
         (.append names (.format "opttype{}" i))

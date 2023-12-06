@@ -1,14 +1,13 @@
 .PHONY: compile
 compile:
-	hy2py -o neofp neofp
+	hy2py -o build/hy2py neofp
 
 .PHONY: build
-build: compile
-	hy setup.hy -v bdist_wheel
+build:
+	poetry build
 
 .PHONY: clean
 clean:
-	rm -rf build dist neofp.egg-info
+	rm -rf build dist
 	hy -c "(do (import pathlib [Path] shutil [rmtree]) \
-(for [p (.rglob (Path \"neofp\") \"*.py\")] (.unlink p)) \
 (for [p (.rglob (Path \"neofp\") \"__pycache__\")] (rmtree p)))"
