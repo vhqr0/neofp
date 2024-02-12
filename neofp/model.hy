@@ -38,17 +38,33 @@
         (lfor row data (list (map int (cut row 1 None))))))))
 
 (defclass SingleLayerModel []
-  (defn #-- init [self label-names feat-names _model]
+  (defn #-- init [self label-names feat-names _model [_scales None]]
     (setv self.label-names label-names
           self.feat-names feat-names
-          self._model _model))
+          self._model _model
+          self._scales _scales))
+
+  (defn predict [self feat]
+    (when (isinstance feat dict)
+      (setv feat (lfor name self.feat-names (.get feat name 0))))
+    (when self._scales
+      (setv feat (lfor #(f s) (zip feat self._scales) (if (= s 0) f (/ f s)))))
+    (get self.label-names (get (.predict self._model (np.array [feat])) 0)))
 
   (defn predict-proba [self feat]
     (when (isinstance feat dict)
       (setv feat (lfor name self.feat-names (.get feat name 0))))
+    (when self._scales
+      (setv feat (lfor #(f s) (zip feat self._scales) (if (= s 0) f (/ f s)))))
     #(self.label-names (get (.predict-proba self._model (np.array [feat])) 0)))
 
-  (defn [classmethod] train [cls feat-names labels feats [model-factory RandomForestClassifier]]
+  (defn [classmethod] train [cls feat-names labels feats [model-factory RandomForestClassifier] [auto-scale False]]
+    (setv scales None)
+
+    (when auto-scale
+      (setv scales (lfor i (range (len (get feats 0))) (max (map (operator.itemgetter i) feats)))
+            feats (lfor feat feats (lfor #(f s) (zip feat scales) (if (= s 0) f (/ f s))))))
+
     (setv label-names (tuple (set labels))
           feat-names (tuple feat-names))
 
@@ -58,7 +74,7 @@
     (setv model (doto (model-factory)
                       (.fit (np.array feats) (np.array labels))))
 
-    (cls label-names feat-names model)))
+    (cls label-names feat-names model scales)))
 
 (defclass MultiLayerModel []
   (defn #-- init [self _model _submodels]
@@ -98,7 +114,7 @@
         (raise RuntimeError))
       model))
 
-  (defn [classmethod] train [cls feat-names labels feats [model-factory RandomForestClassifier]]
+  (defn [classmethod] train [cls feat-names labels feats [model-factory RandomForestClassifier] [auto-scale False]]
     (setv #(labels feats) (unzip-2 (filter (operator.itemgetter 0) (zip labels feats)))
           sublabels (list (ap-map #((get it 0)) labels))
           sublabel-set (set sublabels))
